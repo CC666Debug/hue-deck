@@ -1,0 +1,69 @@
+# Every push builds Hue Deck for Windows and Linux and puts it on the Releases page as "latest".
+# Free on public repos; switch it off any time under the repo's Actions tab.
+name: Build apps
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # plus a "Run workflow" button
+permissions:
+  contents: write
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04]   # 22.04 so the Linux build runs on Mint 21 and newer
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libssl-dev patchelf libfuse2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: desktop }
+      - run: npm ci && node build.mjs
+      - name: Build
+        working-directory: desktop
+        run: npx tauri build
+      - name: Collect (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory out | Out-Null
+          Copy-Item desktop\target\release\bundle\nsis\*-setup.exe out\HueDeck-Setup.exe
+      - name: Collect (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir out
+          cp desktop/target/release/bundle/deb/*.deb out/HueDeck.deb
+          cp desktop/target/release/bundle/appimage/*.AppImage out/HueDeck.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}
+          path: out/*
+
+  release:
+    needs: [desktop]
+    if: ${{ !cancelled() }}   # still publish whatever built if one edition failed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: files, merge-multiple: true }
+      - name: Put it on the Releases page
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          ls -la files
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest files/* --title "Hue Deck $VER" --notes "Built from $(git rev-parse --short HEAD).
+
+          - **Windows**: HueDeck-Setup.exe (installs for you only, no admin)
+          - **Linux Mint**: HueDeck.deb (double-click to install), or HueDeck.AppImage (make it executable and run)
+
+          Shortcuts point at the installed app, so make them after installing (not from a copy you'll move)."

@@ -1,0 +1,14 @@
+{
+  "name": "hue-deck",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.2",
+    "esbuild": "^0.28.2"
+  }
+}
