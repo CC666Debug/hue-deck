@@ -2,7 +2,7 @@
 import { loadHome, refreshState, lightHex, sceneColors, hexToXy, mirekToHex } from './hue.js';
 import { makeIcon, iconPng } from './icon.js';
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const store = {
@@ -74,7 +74,7 @@ let home = null;
 const shown = new Set(JSON.parse(store.get('lightsShown') || '[]'));   // cards with their lights listed
 const opened = new Set(JSON.parse(store.get('cardsOpen') || '[]'));   // cards opened to show their scenes
 // the user's own order (dragged): tiles by group id; scenes and lights per room
-let order = JSON.parse(store.get('order') || '[]');
+let order = JSON.parse(store.get('order') || '[]'), sections = JSON.parse(store.get('sections') || '["room","zone"]');
 const sceneOrder = JSON.parse(store.get('sceneOrder') || '{}'), lightOrder = JSON.parse(store.get('lightOrder') || '{}');
 const sorted = (list, ids = [], id = x => x.id) => list.map((x, i) => [x, ids.includes(id(x)) ? ids.indexOf(id(x)) : 1e4 + i]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
 const byOrder = gs => sorted(gs, order);
@@ -122,8 +122,8 @@ function render(){
   const main = $('#main'), y = main.scrollTop;
   const rooms = byOrder(home.groups.filter(g => g.kind === 'room')), zones = byOrder(home.groups.filter(g => g.kind === 'zone'));
   main.innerHTML = !home.groups.length ? '<div class="empty">This bridge has no rooms yet. Make some in the Hue app on your phone, then come back.</div>'
-    : (rooms.length ? `<h2>Rooms</h2><div class="grid">${rooms.map(cardHtml).join('')}</div>` : '') +
-      (zones.length ? `<h2>Zones</h2><div class="grid">${zones.map(cardHtml).join('')}</div>` : '');
+    : sections.map(k => { const gs = k === 'room' ? rooms : zones;
+        return gs.length ? `<div class="section" data-sec="${k}"><h2 title="Drag to move ${k === 'room' ? 'Rooms' : 'Zones'} up or down">${k === 'room' ? 'Rooms' : 'Zones'}</h2><div class="grid">${gs.map(cardHtml).join('')}</div></div>` : ''; }).join('');
   main.scrollTop = y;
   const hg = home.home && home.gls.get(home.home);
   $('#homeBox').hidden = !hg;
@@ -203,6 +203,7 @@ let drag = null, dragged = false;
 function grabbed(e){
   const sc = e.target.closest('.scene'); if (sc) return sc;
   if (e.target.closest('input,button')) return null;
+  if (e.target.closest('h2')) return e.target.closest('.section');
   return e.target.closest('.light') || e.target.closest('.card');
 }
 main.addEventListener('pointerdown', e => {
@@ -247,8 +248,9 @@ function endDrag(){
   if (!on) return;
   dragged = true; setTimeout(() => { dragged = false; }, 0);
   item.classList.remove('dragging'); document.body.classList.remove('dragging'); item.style.transform = '';
-  const gid = item.closest('[data-group]').dataset.group;
-  if (kind === 'card'){ order = [...main.querySelectorAll('.card')].map(c => c.dataset.group); store.set('order', JSON.stringify(order)); }
+  const gid = item.closest('[data-group]')?.dataset.group;
+  if (kind === 'section'){ sections = [...box.children].map(c => c.dataset.sec); store.set('sections', JSON.stringify(sections)); }
+  else if (kind === 'card'){ order = [...main.querySelectorAll('.card')].map(c => c.dataset.group); store.set('order', JSON.stringify(order)); }
   else if (kind === 'scene'){ sceneOrder[gid] = [...box.children].map(c => c.dataset.scene); store.set('sceneOrder', JSON.stringify(sceneOrder)); }
   else { lightOrder[gid] = [...box.children].map(c => c.dataset.light); store.set('lightOrder', JSON.stringify(lightOrder)); }
   render();
