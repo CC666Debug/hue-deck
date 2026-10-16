@@ -2,7 +2,7 @@
 import { loadHome, refreshState, lightHex, sceneColors, hexToXy, mirekToHex } from './hue.js';
 import { makeIcon, iconPng } from './icon.js';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const store = {
@@ -73,6 +73,11 @@ window.addEventListener('blur', closeMenu);
 let home = null;
 const shown = new Set(JSON.parse(store.get('lightsShown') || '[]'));   // cards with their lights listed
 const opened = new Set(JSON.parse(store.get('cardsOpen') || '[]'));   // cards opened to show their scenes
+// the user's own order (dragged): tiles by group id; scenes and lights per room
+let order = JSON.parse(store.get('order') || '[]');
+const sceneOrder = JSON.parse(store.get('sceneOrder') || '{}'), lightOrder = JSON.parse(store.get('lightOrder') || '{}');
+const sorted = (list, ids = [], id = x => x.id) => list.map((x, i) => [x, ids.includes(id(x)) ? ids.indexOf(id(x)) : 1e4 + i]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
+const byOrder = gs => sorted(gs, order);
 const avg = hexes => {
   if (!hexes.length) return null;
   const s = [0, 0, 0];
@@ -85,10 +90,10 @@ const sceneGrad = cols => cols.length > 1 ? `linear-gradient(110deg,${cols.join(
 const briOf = r => Math.round(r?.dimming?.brightness ?? 0);
 
 function cardHtml(g){
-  const gl = home.gls.get(g.gl), on = !!gl?.on?.on, ls = lightsOf(g);
+  const gl = home.gls.get(g.gl), on = !!gl?.on?.on, ls = sorted(lightsOf(g), lightOrder[g.id]);
   const nOn = ls.filter(l => l.on?.on).length, cols = groupColors(g), b = on ? briOf(gl) : 0;
   const glow = cols.length ? `linear-gradient(90deg,${cols.length > 1 ? cols.join(',') : cols[0] + ',' + cols[0]})` : 'transparent';
-  const scenes = g.scenes.map(id => home.scenes.get(id)).filter(Boolean);
+  const scenes = sorted(g.scenes.map(id => home.scenes.get(id)).filter(Boolean), sceneOrder[g.id]);
   const open = shown.has(g.id), big = opened.has(g.id);
   return `<section class="card${on ? '' : ' off'}${big ? ' open' : ''}" data-group="${g.id}" style="--glow:${glow}">
     <div class="top">
@@ -115,7 +120,7 @@ function lightRow(l){
 function render(){
   if (!home) return;
   const main = $('#main'), y = main.scrollTop;
-  const rooms = home.groups.filter(g => g.kind === 'room'), zones = home.groups.filter(g => g.kind === 'zone');
+  const rooms = byOrder(home.groups.filter(g => g.kind === 'room')), zones = byOrder(home.groups.filter(g => g.kind === 'zone'));
   main.innerHTML = !home.groups.length ? '<div class="empty">This bridge has no rooms yet. Make some in the Hue app on your phone, then come back.</div>'
     : (rooms.length ? `<h2>Rooms</h2><div class="grid">${rooms.map(cardHtml).join('')}</div>` : '') +
       (zones.length ? `<h2>Zones</h2><div class="grid">${zones.map(cardHtml).join('')}</div>` : '');
@@ -176,6 +181,7 @@ main.addEventListener('input', e => {
 });
 main.addEventListener('pointerdown', () => hold(4000));
 main.addEventListener('click', e => {
+  if (dragged){ dragged = false; return; }   // the click that ends a drag
   const t = e.target.closest('button');
   if (!t){   // a click on a closed card, or on an open card's name, opens or closes it
     const card = e.target.closest('.card');
@@ -191,6 +197,66 @@ main.addEventListener('click', e => {
   else if (t.hasAttribute('data-color') && !t.classList.contains('none')) colorDialog({ kind: 'light', id: t.closest('[data-light]').dataset.light });
   else if (t.dataset.menu){ const r = t.getBoundingClientRect(); itemMenu(t, r.right - 210, r.bottom + 4); }
 });
+
+/* ---------------- Drag anything to move it: tiles among their kind, scenes and lights within their room ---------------- */
+let drag = null, dragged = false;
+function grabbed(e){
+  const sc = e.target.closest('.scene'); if (sc) return sc;
+  if (e.target.closest('input,button')) return null;
+  return e.target.closest('.light') || e.target.closest('.card');
+}
+main.addEventListener('pointerdown', e => {
+  const item = e.button === 0 && grabbed(e);
+  if (!item) return;
+  const r = item.getBoundingClientRect();
+  drag = { item, box: item.parentElement, kind: item.classList[0], x0: e.clientX, y0: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, on: false };
+});
+addEventListener('pointermove', e => {
+  if (!drag) return;
+  const { item, box, kind } = drag;
+  if (!drag.on){
+    if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 6) return;
+    drag.on = true; item.classList.add('dragging'); document.body.classList.add('dragging');
+  }
+  hold(4000);
+  // hit-test where things sit, not where they're gliding (or they'd swap straight back)
+  const over = [...box.children].find(el => {
+    if (el === item || !el.classList.contains(kind)) return false;
+    const r = el.getBoundingClientRect(), m = new DOMMatrix(getComputedStyle(el).transform);
+    const x = e.clientX + m.m41, y = e.clientY + m.m42;
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  });
+  if (over){
+    const items = [...box.children], before = new Map(items.map(c => [c, c.getBoundingClientRect()]));
+    box.insertBefore(item, items.indexOf(over) > items.indexOf(item) ? over.nextSibling : over);
+    for (const c of items){   // the others glide to their new places
+      if (c === item) continue;
+      const a = before.get(c), b = c.getBoundingClientRect();
+      if (a.left === b.left && a.top === b.top) continue;
+      c.style.transition = 'none'; c.style.transform = `translate(${a.left - b.left}px,${a.top - b.top}px)`;
+      requestAnimationFrame(() => { c.style.transition = 'transform .18s'; c.style.transform = ''; });
+    }
+  }
+  item.style.transform = '';
+  const r = item.getBoundingClientRect();
+  item.style.transform = `translate(${e.clientX - drag.dx - r.left}px,${e.clientY - drag.dy - r.top}px) scale(1.03)`;
+});
+function endDrag(){
+  if (!drag) return;
+  const { item, box, kind, on } = drag; drag = null;
+  if (!on) return;
+  dragged = true; setTimeout(() => { dragged = false; }, 0);
+  item.classList.remove('dragging'); document.body.classList.remove('dragging'); item.style.transform = '';
+  const gid = item.closest('[data-group]').dataset.group;
+  if (kind === 'card'){ order = [...main.querySelectorAll('.card')].map(c => c.dataset.group); store.set('order', JSON.stringify(order)); }
+  else if (kind === 'scene'){ sceneOrder[gid] = [...box.children].map(c => c.dataset.scene); store.set('sceneOrder', JSON.stringify(sceneOrder)); }
+  else { lightOrder[gid] = [...box.children].map(c => c.dataset.light); store.set('lightOrder', JSON.stringify(lightOrder)); }
+  render();
+}
+addEventListener('pointerup', endDrag);
+addEventListener('pointercancel', endDrag);
+addEventListener('blur', endDrag);
+
 main.addEventListener('contextmenu', e => {
   const t = e.target.closest('[data-menu],[data-scene],[data-light] .ln,.card');
   if (!t) return;
