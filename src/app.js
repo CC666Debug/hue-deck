@@ -2,7 +2,7 @@
 import { loadHome, refreshState, lightHex, sceneColors, hexToXy, mirekToHex } from './hue.js';
 import { makeIcon, iconPng } from './icon.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const store = {
@@ -78,6 +78,8 @@ let order = JSON.parse(store.get('order') || '[]'), sections = JSON.parse(store.
 const sceneOrder = JSON.parse(store.get('sceneOrder') || '{}'), lightOrder = JSON.parse(store.get('lightOrder') || '{}');
 const sorted = (list, ids = [], id = x => x.id) => list.map((x, i) => [x, ids.includes(id(x)) ? ids.indexOf(id(x)) : 1e4 + i]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
 const byOrder = gs => sorted(gs, order);
+// each section once (1.3.0 could save one twice)
+sections = [...new Set([...sections, 'room', 'zone'].filter(k => k === 'room' || k === 'zone'))];
 const avg = hexes => {
   if (!hexes.length) return null;
   const s = [0, 0, 0];
@@ -215,6 +217,7 @@ main.addEventListener('pointerdown', e => {
 addEventListener('pointermove', e => {
   if (!drag) return;
   const { item, box, kind } = drag;
+  if (!item.isConnected){ drag = null; document.body.classList.remove('dragging'); return; }
   if (!drag.on){
     if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 6) return;
     drag.on = true; item.classList.add('dragging'); document.body.classList.add('dragging');
@@ -450,7 +453,7 @@ function setupScreen(){
 
 /* ---------------- Start and keep up to date ---------------- */
 async function refresh(){
-  if (!home || document.hidden || Date.now() < busyUntil || dlgDone || menuEl) return;
+  if (!home || drag || document.hidden || Date.now() < busyUntil || dlgDone || menuEl) return;
   try { await refreshState(api, home); render(); } catch (_){ /* the next one will try again */ }
 }
 async function start(){
