@@ -2,7 +2,7 @@
 import { loadHome, refreshState, lightHex, sceneColors, hexToXy, mirekToHex } from './hue.js';
 import { makeIcon, iconPng } from './icon.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const store = {
@@ -72,6 +72,7 @@ window.addEventListener('blur', closeMenu);
 /* ---------------- The home on screen ---------------- */
 let home = null;
 const shown = new Set(JSON.parse(store.get('lightsShown') || '[]'));   // cards with their lights listed
+const opened = new Set(JSON.parse(store.get('cardsOpen') || '[]'));   // cards opened to show their scenes
 const avg = hexes => {
   if (!hexes.length) return null;
   const s = [0, 0, 0];
@@ -88,17 +89,17 @@ function cardHtml(g){
   const nOn = ls.filter(l => l.on?.on).length, cols = groupColors(g), b = on ? briOf(gl) : 0;
   const glow = cols.length ? `linear-gradient(90deg,${cols.length > 1 ? cols.join(',') : cols[0] + ',' + cols[0]})` : 'transparent';
   const scenes = g.scenes.map(id => home.scenes.get(id)).filter(Boolean);
-  const open = shown.has(g.id);
-  return `<section class="card${on ? '' : ' off'}" data-group="${g.id}" style="--glow:${glow}">
+  const open = shown.has(g.id), big = opened.has(g.id);
+  return `<section class="card${on ? '' : ' off'}${big ? ' open' : ''}" data-group="${g.id}" style="--glow:${glow}">
     <div class="top">
-      <div class="name" data-menu="group">${esc(g.name)}<span class="sub">${ls.length ? `${nOn} of ${ls.length} light${ls.length > 1 ? 's' : ''} on` : 'no lights'}</span></div>
+      <div class="name" data-menu="group"><span class="chev">${big ? '▾' : '▸'}</span>${esc(g.name)}<span class="sub">${ls.length ? `${nOn} of ${ls.length} light${ls.length > 1 ? 's' : ''} on` : 'no lights'}</span></div>
       <input type="checkbox" class="sw" data-gl="${g.gl}" ${on ? 'checked' : ''} aria-label="${esc(g.name)} on or off">
       <button class="dots" data-menu="group" aria-label="More for ${esc(g.name)}">⋯</button>
     </div>
     <input type="range" class="bri" min="1" max="100" value="${b || 1}" data-gl="${g.gl}" ${on ? '' : 'disabled'} style="--p:${b}%;--fill:${avg(cols) || 'var(--accent)'}" aria-label="${esc(g.name)} brightness">
-    ${scenes.length ? `<div class="scenes">${scenes.map(s => `<button class="scene${s.status?.active && s.status.active !== 'inactive' ? ' on' : ''}" data-scene="${s.id}" style="--g:${sceneGrad(sceneColors(s))}" title="${esc(s.metadata.name)} (right-click for a shortcut)">${esc(s.metadata.name)}</button>`).join('')}</div>` : ''}
-    ${ls.length ? `<button class="more" data-more>${open ? '▾ Hide lights' : `▸ Lights (${ls.length})`}</button>` : ''}
-    ${open ? `<div class="lights">${ls.map(lightRow).join('')}</div>` : ''}
+    ${big && scenes.length ? `<div class="scenes">${scenes.map(s => `<button class="scene${s.status?.active && s.status.active !== 'inactive' ? ' on' : ''}" data-scene="${s.id}" style="--g:${sceneGrad(sceneColors(s))}" title="${esc(s.metadata.name)} (right-click for a shortcut)">${esc(s.metadata.name)}</button>`).join('')}</div>` : ''}
+    ${big && ls.length ? `<button class="more" data-more>${open ? '▾ Hide lights' : `▸ Lights (${ls.length})`}</button>` : ''}
+    ${big && open ? `<div class="lights">${ls.map(lightRow).join('')}</div>` : ''}
   </section>`;
 }
 function lightRow(l){
@@ -175,7 +176,15 @@ main.addEventListener('input', e => {
 });
 main.addEventListener('pointerdown', () => hold(4000));
 main.addEventListener('click', e => {
-  const t = e.target.closest('button'); if (!t) return;
+  const t = e.target.closest('button');
+  if (!t){   // a click on a closed card, or on an open card's name, opens or closes it
+    const card = e.target.closest('.card');
+    if (!card || e.target.closest('input') || (card.classList.contains('open') && !e.target.closest('.top'))) return;
+    const id = card.dataset.group;
+    opened.has(id) ? opened.delete(id) : opened.add(id);
+    store.set('cardsOpen', JSON.stringify([...opened])); render();
+    return;
+  }
   const card = t.closest('[data-group]'), g = card && home.groups.find(g => g.id === card.dataset.group);
   if (t.dataset.scene) recall(t.dataset.scene);
   else if (t.hasAttribute('data-more')){ shown.has(g.id) ? shown.delete(g.id) : shown.add(g.id); store.set('lightsShown', JSON.stringify([...shown])); render(); }
