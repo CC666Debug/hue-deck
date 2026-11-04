@@ -2,7 +2,8 @@
 import { loadHome, refreshState, lightHex, sceneColors, hexToXy, mirekToHex } from './hue.js';
 import { makeIcon, iconPng } from './icon.js';
 
-const VERSION = '1.3.1';
+const VERSION = '1.3.2';
+const skipGc = () => { try { return localStorage.getItem('skipgc') === 't'; } catch (_){ return false; } };
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const store = {
@@ -406,6 +407,8 @@ $('#bMenu').addEventListener('click', e => {
     ['Refresh', () => start()],
     ['Theme…', themeDialog],
     ['Bridge…', bridgeDialog],
+    // GoatCounter skips counting while localStorage skipgc = 't' (its own flag)
+    [skipGc() ? 'Count me' : 'Don’t count me', () => { try { if (skipGc()) localStorage.removeItem('skipgc'); else localStorage.setItem('skipgc', 't'); } catch (_){} }],
     '-', { ver: `Hue Deck ${VERSION}` },
   ]);
 });
