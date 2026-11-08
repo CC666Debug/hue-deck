@@ -2,7 +2,7 @@
 import { loadHome, refreshState, lightHex, sceneColors, hexToXy, mirekToHex } from './hue.js';
 import { makeIcon, iconPng } from './icon.js';
 
-const VERSION = '1.3.2';
+const VERSION = '1.4.0';
 const skipGc = () => { try { return localStorage.getItem('skipgc') === 't'; } catch (_){ return false; } };
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -90,6 +90,12 @@ const avg = hexes => {
 const lightsOf = g => g.lights.map(id => home.lights.get(id)).filter(Boolean);
 const groupColors = g => [...new Set(lightsOf(g).map(lightHex).filter(Boolean))];
 const sceneGrad = cols => cols.length > 1 ? `linear-gradient(110deg,${cols.join(',')})` : cols[0];
+// Pale scenes (Energize, Winter beauty…) get dark writing; white was unreadable on them.
+const paleScene = cols => {
+  if (!cols.length) return false;
+  const lum = h => { const n = parseInt(h.slice(1), 16), c = [n >> 16, n >> 8 & 255, n & 255].map(v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }); return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]; };
+  return cols.reduce((t, h) => t + lum(h), 0) / cols.length > .42;
+};
 const briOf = r => Math.round(r?.dimming?.brightness ?? 0);
 
 function cardHtml(g){
@@ -105,7 +111,7 @@ function cardHtml(g){
       <button class="dots" data-menu="group" aria-label="More for ${esc(g.name)}">⋯</button>
     </div>
     <input type="range" class="bri" min="1" max="100" value="${b || 1}" data-gl="${g.gl}" ${on ? '' : 'disabled'} style="--p:${b}%;--fill:${avg(cols) || 'var(--accent)'}" aria-label="${esc(g.name)} brightness">
-    ${big && scenes.length ? `<div class="scenes">${scenes.map(s => `<button class="scene${s.status?.active && s.status.active !== 'inactive' ? ' on' : ''}" data-scene="${s.id}" style="--g:${sceneGrad(sceneColors(s))}" title="${esc(s.metadata.name)} (right-click for a shortcut)">${esc(s.metadata.name)}</button>`).join('')}</div>` : ''}
+    ${big && scenes.length ? `<div class="scenes">${scenes.map(s => `<button class="scene${s.status?.active && s.status.active !== 'inactive' ? ' on' : ''}${paleScene(sceneColors(s)) ? ' pale' : ''}" data-scene="${s.id}" style="--g:${sceneGrad(sceneColors(s))}" title="${esc(s.metadata.name)} (right-click for a shortcut)">${esc(s.metadata.name)}</button>`).join('')}</div>` : ''}
     ${big && ls.length ? `<button class="more" data-more>${open ? '▾ Hide lights' : `▸ Lights (${ls.length})`}</button>` : ''}
     ${big && open ? `<div class="lights">${ls.map(lightRow).join('')}</div>` : ''}
   </section>`;
@@ -370,11 +376,18 @@ async function shortcutDialog(t){
 }
 
 /* ---------------- Theme (like Markpad): tap the moon for light/dark, hold it for the colors ---------------- */
+const SUN = 'M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z';
+const MOON = 'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z';
 const PALETTES = [['Plain', '', '#8a8d93'], ['Red', 'red', '#a4463f'], ['Blue', 'blue', '#3d6a9e'], ['Green', 'green', '#4a7a51'], ['Yellow', 'yellow', '#93700f']];
 function applyTheme(){
   const t = store.get('theme') || '', p = store.get('palette') || '', d = document.documentElement;
   t ? d.dataset.theme = t : delete d.dataset.theme;
   p ? d.dataset.palette = p : delete d.dataset.palette;
+  // The button shows what a tap switches to: a sun while dark, a moon while light.
+  const dark = getComputedStyle(d).colorScheme.includes('dark'), ic = document.querySelector('#bTheme path');
+  if (ic) ic.setAttribute('d', dark ? SUN : MOON);
+  const bt = document.querySelector('#bTheme');
+  if (bt) bt.title = (dark ? 'Switch to light' : 'Switch to dark') + ' (hold or right-click for theme colors)';
 }
 applyTheme();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
